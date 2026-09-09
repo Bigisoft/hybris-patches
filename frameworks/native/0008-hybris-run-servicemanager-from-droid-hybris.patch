@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sailfish sweet port <bigisoft@gmail.com>
+Date: Mon, 8 Sep 2026 00:00:00 +0000
+Subject: [PATCH] (hybris) run servicemanager from droid-hybris
+
+Point both service registries at the patched binaries droid-hal ships, the way
+system/apex/0001 already does for apexd. The stock ones abort without SELinux:
+
+    vndservicemanager: Check failed: selinux_status_open(true ) >= 0
+    Aborted (core dumped)
+
+servicemanager comes from droid-hybris/system/bin, but vndservicemanager must
+come from droid-hybris/vendor/bin so that linkerconfig puts it in the vendor
+section and it links against the vendor libbinder -- see
+system/linkerconfig/0002. With the system libbinder it acquires system binder
+stability and silently drops every addService() from a vendor process.
+---
+ cmds/servicemanager/servicemanager.rc    | 2 +-
+ cmds/servicemanager/vndservicemanager.rc | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cmds/servicemanager/servicemanager.rc b/cmds/servicemanager/servicemanager.rc
+index 73fd9f10a7..f7b425aba0 100644
+--- a/cmds/servicemanager/servicemanager.rc
++++ b/cmds/servicemanager/servicemanager.rc
+@@ -1,4 +1,4 @@
+-service servicemanager /system/bin/servicemanager
++service servicemanager /usr/libexec/droid-hybris/system/bin/servicemanager
+     class core animation
+     user system
+     group system readproc
+diff --git a/cmds/servicemanager/vndservicemanager.rc b/cmds/servicemanager/vndservicemanager.rc
+index 80af1d1377..83fd8b6e96 100644
+--- a/cmds/servicemanager/vndservicemanager.rc
++++ b/cmds/servicemanager/vndservicemanager.rc
+@@ -1,4 +1,4 @@
+-service vndservicemanager /vendor/bin/vndservicemanager /dev/vndbinder
++service vndservicemanager /usr/libexec/droid-hybris/vendor/bin/vndservicemanager /dev/vndbinder
+     class core
+     user system
+     group system readproc

@@ -1,0 +1,68 @@
+diff --git a/libprocessgroup/processgroup.cpp b/libprocessgroup/processgroup.cpp
+index cea22b7a6..031eb7444 100644
+--- a/libprocessgroup/processgroup.cpp
++++ b/libprocessgroup/processgroup.cpp
+@@ -194,32 +194,63 @@ bool SetProcessProfiles(uid_t uid, pid_t pid, const std::vector<std::string>& pr
+             uid, pid, std::span<const std::string>(profiles), false);
+ }
+ 
++
++// (hybris) On a Sailfish OS port systemd is PID 1 and owns the cgroup
++// hierarchy. Android's CgroupSetup() refuses to run unless getpid() == 1, so
++// hybris-patches disables the call entirely (see
++// 0005-hybris-Systemd-handles-control-groups and
++// 0023-hybris-disable-the-usage-of-libprocessgroup). As a result
++// /dev/cgroup_info is never created and every task-profile lookup fails.
++//
++// Patch 0023 covers init's own call sites, but standalone Android services call
++// this library directly and several treat failure as fatal, for example
++// system/logging/logd/main.cpp:
++//     if (set_sched_policy(0, SP_BACKGROUND) < 0)
++//         PLOG(FATAL) << "failed to set background scheduling policy";
++//
++// On Android bases before 16 the failure was tolerated. It no longer is, and
++// the result is that logd, the graphics composer and effectively every other
++// Android service abort at startup, so the device never gets a display.
++//
++// Since systemd already manages cgroups on a hybris port, applying Android's
++// task profiles is meaningless here. Report success and do nothing.
++static bool HybrisCgroupsUnavailable() {
++    static const bool unavailable = (access("/dev/cgroup_info", F_OK) != 0);
++    return unavailable;
++}
++
+ bool SetProcessProfiles(uid_t uid, pid_t pid, std::initializer_list<std::string_view> profiles) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetProcessProfiles(
+             uid, pid, std::span<const std::string_view>(profiles), false);
+ }
+ 
+ bool SetProcessProfiles(uid_t uid, pid_t pid, std::span<const std::string_view> profiles) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetProcessProfiles(uid, pid, profiles, false);
+ }
+ 
+ bool SetProcessProfilesCached(uid_t uid, pid_t pid, const std::vector<std::string>& profiles) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetProcessProfiles(
+             uid, pid, std::span<const std::string>(profiles), true);
+ }
+ 
+ bool SetTaskProfiles(pid_t tid, const std::vector<std::string>& profiles, bool use_fd_cache) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetTaskProfiles(tid, std::span<const std::string>(profiles),
+                                                        use_fd_cache);
+ }
+ 
+ bool SetTaskProfiles(pid_t tid, std::initializer_list<std::string_view> profiles,
+                      bool use_fd_cache) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetTaskProfiles(
+             tid, std::span<const std::string_view>(profiles), use_fd_cache);
+ }
+ 
+ bool SetTaskProfiles(pid_t tid, std::span<const std::string_view> profiles, bool use_fd_cache) {
++    if (HybrisCgroupsUnavailable()) return true;
+     return TaskProfiles::GetInstance().SetTaskProfiles(tid, profiles, use_fd_cache);
+ }
+ 

@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sailfish sweet port <bigisoft@gmail.com>
+Date: Tue, 9 Sep 2026 00:00:00 +0000
+Subject: [PATCH] (hybris) perform_apex_config without mount namespaces
+
+Companion to 0033 "(hybris) Do not SetupMountNamespaces()". Because that
+patch compiles SetupMountNamespaces() out, init never records a bootstrap
+or default mount namespace id, so GetCurrentMountNamespace() always fails
+and do_perform_apex_config() memoises every call under NS_BOOTSTRAP. The
+second perform_apex_config -- the one in post-fs-data, after apexd has
+activated every APEX -- then does nothing at all.
+
+Observed on Redmi Note 10 Pro (sweet), hybris-23.2 / Android 16:
+
+  init: Command 'exec_start derive_sdk' ... failed: Service not found
+  init: Command 'exec_start art_boot' ... failed: Service not found
+  init: Command 'exec_start bpfloader' action=load-bpf-programs ... failed:
+        Could not start exec service: Cannot start an updatable service
+        'bpfloader' before configs from APEXes are all loaded
+  init: Got shutdown_command 'reboot,netbpfload-missing'
+
+bpfloader carries reboot_on_failure, so the device rebooted roughly two
+minutes into every boot, long before the UI came up. /linkerconfig was
+also left empty because GenerateLinkerConfiguration() sits in the same
+skipped block.
+
+With one namespace the stage has to come from the call count instead:
+call 1 is early-init (bootstrap APEXes only), call 2 is post-fs-data.
+---
+ init/builtins.cpp | 47 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/init/builtins.cpp b/init/builtins.cpp
+index 2b27e4e5a..4ad8d28a5 100644
+--- a/init/builtins.cpp
++++ b/init/builtins.cpp
+@@ -1255,6 +1255,7 @@ static Result<void> do_perform_apex_config(const BuiltinArguments& args) {
+         PLOG(ERROR) << "restorecon failed: " << kApexInfolist;
+     }
+ 
++#ifdef DISABLED_FOR_HYBRIS_SUPPORT
+     MountNamespace current_mnt_ns = GetCurrentMountNamespace().value_or(NS_BOOTSTRAP);
+     // We don't want to parse the same apexes twice in the same mount namespace.
+     static std::map<MountNamespace, bool> apex_parsed;
+@@ -1275,6 +1276,42 @@ static Result<void> do_perform_apex_config(const BuiltinArguments& args) {
+             ServiceList::GetInstance().StartDelayedServices();
+         }
+     }
++#else
++    // (hybris) SetupMountNamespaces() is compiled out, so init never records a
++    // bootstrap or a default mount namespace id and GetCurrentMountNamespace()
++    // can never succeed. Upstream would then memoise every call under the same
++    // NS_BOOTSTRAP key, which turns the *second* perform_apex_config -- the one
++    // in post-fs-data, run once apexd has activated every APEX -- into a no-op.
++    // The visible result is that no APEX ships its init .rc (derive_sdk,
++    // derive_classpath, art_boot, mainline_aconfigd... all "Service not found"),
++    // /linkerconfig stays empty, and because SetDefaultMountNamespaceReady() is
++    // never reached, updatable services cannot start at all. bpfloader is one of
++    // them and carries reboot_on_failure, so the device reboots with
++    // "reboot,netbpfload-missing" before the UI is ever brought up.
++    //
++    // With a single namespace the stage cannot be derived from the namespace, so
++    // derive it from the call itself: the first call comes from early-init, where
++    // only the bootstrap APEXes are mounted, the second from post-fs-data once
++    // apexd is done. Re-parsing the bootstrap APEXes on the second pass is
++    // harmless -- init ignores duplicate service definitions -- and is in fact
++    // required here, since /bootstrap-apex (which upstream uses to skip them)
++    // only exists in the two-namespace setup.
++    static int hybris_apex_config_pass = 0;
++    const bool hybris_all_apexes_active = (++hybris_apex_config_pass >= 2);
++
++    if (auto st = ParseRcScriptsFromAllApexes(/*is_default_mnt_ns=*/false); !st.ok()) {
++        LOG(ERROR) << st.error();
++    }
++    if (auto st = GenerateLinkerConfiguration(); !st.ok()) {
++        LOG(ERROR) << st.error();
++    }
++
++    if (hybris_all_apexes_active) {
++        SetDefaultMountNamespaceReady();
++        // Now, we can start delayed services as well.
++        ServiceList::GetInstance().StartDelayedServices();
++    }
++#endif
+     return {};
+ }
+ 

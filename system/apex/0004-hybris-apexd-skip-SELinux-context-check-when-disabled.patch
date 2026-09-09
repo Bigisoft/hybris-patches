@@ -1,0 +1,49 @@
+diff --git a/apexd/apexd.cpp b/apexd/apexd.cpp
+index 4c86a996..3dba31ee 100644
+--- a/apexd/apexd.cpp
++++ b/apexd/apexd.cpp
+@@ -44,6 +44,7 @@
+ #include <sys/ioctl.h>
+ #include <sys/mount.h>
+ #include <sys/stat.h>
++#include <selinux/selinux.h>  // (hybris) is_selinux_enabled()
+ #include <sys/sysinfo.h>
+ #include <sys/types.h>
+ #include <unistd.h>
+@@ -2463,12 +2464,30 @@ Result<ApexFile> OpenAndValidateDecompressedApex(const ApexFile& capex,
+   if (!result.ok()) {
+     return result.error();
+   }
+-  auto ctx = GetfileconPath(apex_path);
+-  if (!ctx.ok()) {
+-    return ctx.error();
+-  }
+-  if (!StartsWith(*ctx, gConfig->active_apex_selinux_ctx)) {
+-    return Error() << apex_path << " has wrong SELinux context " << *ctx;
++  // (hybris) SELinux is disabled on a Sailfish OS port, see hybris-patches
++  // system/core/0017-hybris-Disable-SELinux, and /data carries no security
++  // labels. Every decompressed APEX therefore reads back as "unlabeled" and
++  // activation fails for all of them:
++  //   Failed to decompress CAPEX: /data/apex/decompressed/com.android.art@...
++  //   .decompressed.apex has wrong SELinux context unlabeled
++  //
++  // That leaves "Activated 0 packages", so no APEX rc files are imported, no
++  // updatable service can start ("Cannot start an updatable service 'bpfloader'
++  // before configs from APEXes are all loaded"), and linkerconfig produces an
++  // empty config so nothing can link against APEX libraries.
++  //
++  // With no policy engine loaded there is nothing for this check to enforce.
++  if (is_selinux_enabled()) {
++    auto ctx = GetfileconPath(apex_path);
++    if (!ctx.ok()) {
++      return ctx.error();
++    }
++    if (!StartsWith(*ctx, gConfig->active_apex_selinux_ctx)) {
++      return Error() << apex_path << " has wrong SELinux context " << *ctx;
++    }
++  } else {
++    LOG(WARNING) << "(hybris) SELinux disabled, skipping context check for "
++                 << apex_path;
+   }
+   return std::move(*apex);
+ }

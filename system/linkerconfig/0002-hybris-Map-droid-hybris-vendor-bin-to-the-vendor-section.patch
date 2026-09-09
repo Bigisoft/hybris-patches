@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sailfish sweet port <bigisoft@gmail.com>
+Date: Tue, 9 Sep 2026 00:00:00 +0000
+Subject: [PATCH] (hybris) Map droid-hybris/vendor/bin to the vendor section
+
+droid-hal ships Android binaries under /usr/libexec/droid-hybris, and 0001
+maps /usr/libexec/droid-hybris/system/bin to the "system" linker section.
+That is wrong for binaries which are vendor-side in AOSP: they end up linked
+against /system/lib64/libbinder.so instead of /vendor/lib64/libbinder.so.
+
+vndservicemanager is the case that matters. Built as a vendor module
+(Android.bp: vendor: true, -DVENDORSERVICEMANAGER=1) but executed from a
+"system" directory, it gets the system libbinder and therefore system binder
+stability, while every vendor client uses the vendor libbinder. libbinder then
+rejects addService() locally, before the transaction is ever written to
+/dev/vndbinder -- silently, because ServiceManager::canAddService() does not
+log a denial and QTI's QService::init() only reports via ALOGD_IF.
+
+Observed on Redmi Note 10 Pro (sweet), hybris-23.2 / Android 16: /dev/vndbinder
+held zero services, so the QTI composer could not publish display.qservice,
+HWCSession::Init() failed with -EINVAL, android.hardware.graphics.composer@2.4
+-service exited in a restart loop, the HIDL composer never registered, and
+lipstick blocked forever in IComposer::getService(). The screen never left the
+bootloader splash.
+
+Note the matching is per parent directory (linker_config.cpp file_is_in_dir),
+so a separate directory is required -- a longer path prefix does not work.
+---
+ contents/configuration/baseconfig.cc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/contents/configuration/baseconfig.cc b/contents/configuration/baseconfig.cc
+index 468e653..0fc7cde 100644
+--- a/contents/configuration/baseconfig.cc
++++ b/contents/configuration/baseconfig.cc
+@@ -82,6 +82,12 @@ android::linkerconfig::modules::Configuration CreateBaseConfiguration(
+       // binaries in APKs
+       {Var("PRODUCT") + "/app/", "system"},
+       {"/usr/libexec/droid-hybris/system/bin", "system"},
++      // (hybris) Vendor-side binaries that droid-hal ships outside /vendor still
++      // have to be linked against the vendor copies of libbinder/libc++/libutils.
++      // vndservicemanager in particular: run from a "system" directory it loads
++      // /system/lib64/libbinder.so, gets system binder stability, and then rejects
++      // every addService() from a vendor process before it reaches the wire.
++      {"/usr/libexec/droid-hybris/vendor/bin", "vendor"},
+   };
+ 
+   sections.emplace_back(BuildSystemSection(ctx));

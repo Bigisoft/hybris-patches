@@ -1,0 +1,60 @@
+diff --git a/cmds/servicemanager/Access.cpp b/cmds/servicemanager/Access.cpp
+index 6e2abf65e2..99a2c9dbf0 100644
+--- a/cmds/servicemanager/Access.cpp
++++ b/cmds/servicemanager/Access.cpp
+@@ -90,6 +90,20 @@ std::string Access::CallingContext::toDebugString() const {
+     return ss.str();
+ }
+ 
++// (hybris) SELinux is disabled on a Sailfish OS port, see hybris-patches
++// system/core/0017-hybris-Disable-SELinux. The stock constructor CHECK()s the
++// SELinux setup and aborts when it fails, which kills servicemanager and
++// vndservicemanager on every start:
++//     #04 android::Access::Access()+212  /vendor/bin/vndservicemanager
++//     #01 android::base::DefaultAborter  libbase.so
++// Everything binder-based depends on those two, so init restarts the whole
++// service class in a loop and the device never finishes booting.
++//
++// Treat an unavailable SELinux the way this file already treats a non-Android
++// build: allow every action. That is the only sane policy when there is no
++// policy engine to consult.
++static bool gHybrisSelinuxAvailable = false;
++
+ Access::Access() {
+ #ifdef __ANDROID__
+     union selinux_callback cb;
+@@ -100,9 +114,14 @@ Access::Access() {
+     cb.func_log = kIsVendor ? selinux_vendor_log_callback : selinux_log_callback;
+     selinux_set_callback(SELINUX_CB_LOG, cb);
+ 
+-    CHECK(selinux_status_open(true /*fallback*/) >= 0);
++    gHybrisSelinuxAvailable = (selinux_status_open(true /*fallback*/) >= 0) &&
++                              (getcon(&mThisProcessContext) == 0);
+ 
+-    CHECK(getcon(&mThisProcessContext) == 0);
++    if (!gHybrisSelinuxAvailable) {
++        LOG(WARNING) << "(hybris) SELinux unavailable; service_manager access "
++                        "checks will allow all actions";
++        mThisProcessContext = nullptr;
++    }
+ #endif
+ }
+ 
+@@ -142,6 +161,8 @@ bool Access::canList(const CallingContext& ctx) {
+ bool Access::actionAllowed(const CallingContext& sctx, const char* tctx, const char* perm,
+         const std::string& tname) {
+ #ifdef __ANDROID__
++    if (!gHybrisSelinuxAvailable) return true;  // (hybris) no policy engine
++
+     const char* tclass = "service_manager";
+ 
+     AuditCallbackData data = {
+@@ -163,6 +184,8 @@ bool Access::actionAllowed(const CallingContext& sctx, const char* tctx, const c
+ 
+ bool Access::actionAllowedFromLookup(const CallingContext& sctx, const std::string& name, const char *perm) {
+ #ifdef __ANDROID__
++    if (!gHybrisSelinuxAvailable) return true;  // (hybris) no policy engine
++
+     char *tctx = nullptr;
+     if (selabel_lookup(getSehandle(), &tctx, name.c_str(), SELABEL_CTX_ANDROID_SERVICE) != 0) {
+         LOG(ERROR) << "SELinux: No match for " << name << " in service_contexts.\n";
