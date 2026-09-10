@@ -1,0 +1,48 @@
+From 5b9ccdfa9c8bd8519c70f7ef92f07e2f880b7543 Mon Sep 17 00:00:00 2001
+From: Nikola <bigisoft@gmail.com>
+Date: Thu, 10 Sep 2026 03:57:23 +0200
+Subject: [PATCH] (hybris) Allow sailfish-fpd-community and libhybris
+ Android.mk in external/
+
+Android 16 denylists legacy Android.mk files under external/, so every
+hybris repo that still uses one has to be named explicitly.
+
+  external/sailfish-fpd-community/android/hybris
+      the AIDL fingerprint backend this port adds, for devices whose
+      vendor publishes android.hardware.biometrics.fingerprint-V4 and no
+      HIDL interface
+
+  external/libhybris/libhybris/compat/
+      the camera, hwc2, input, media, surface_flinger and ui compat
+      shims, which are plain Android.mk modules upstream
+
+Same mechanism as the droidmedia entry already in the list.
+
+Change-Id: I3f77b7c17d835a843d6f3cba85534b258d5242ee
+---
+ ui/build/androidmk_denylist.go | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ui/build/androidmk_denylist.go b/ui/build/androidmk_denylist.go
+index 1ac4afb07..5b77befa6 100644
+--- a/ui/build/androidmk_denylist.go
++++ b/ui/build/androidmk_denylist.go
+@@ -63,8 +63,15 @@ var androidmk_allowlist []string = []string{
+ 	"bootable/deprecated-ota/updater/Android.mk",
+ 	"external/mesa/android/Android.mk",
+ 	"external/droidmedia/Android.mk",
++	"external/sailfish-fpd-community/android/hybris/Android.mk",
+ 	"external/busybox/Android.mk",
+ 	"external/selinux_stubs/Android.mk",
++	"external/libhybris/libhybris/compat/camera/Android.mk",
++	"external/libhybris/libhybris/compat/hwc2/Android.mk",
++	"external/libhybris/libhybris/compat/input/Android.mk",
++	"external/libhybris/libhybris/compat/media/Android.mk",
++	"external/libhybris/libhybris/compat/surface_flinger/Android.mk",
++	"external/libhybris/libhybris/compat/ui/Android.mk",
+ }
+ 
+ func getAllLines(ctx Context, filename string) []string {
+-- 
+2.43.0
+
